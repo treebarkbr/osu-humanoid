@@ -2,14 +2,26 @@ name: eval
 on:
   workflow_dispatch:
     inputs:
-      tasks:
-        description: "path to task JSON in the repo (e.g. jobs/current.json)"
+      maps:
+        description: "comma list of .osu filenames"
         required: true
-        default: "jobs/current.json"
+        default: "924759.osu,1021349.osu,1092090.osu,1093245.osu,1093507.osu,110175.osu,1104798.osu,1119026.osu"
+      candidates_b64:
+        description: "base64 JSON list of {id, tap_patch}; empty = baseline"
+        required: false
+        default: ""
       shards:
         description: "JSON list of shard indices, e.g. [0,1,2,3,4,5,6,7]"
         required: false
         default: "[0,1,2,3,4,5,6,7]"
+      profile:
+        description: "human noise profile"
+        required: false
+        default: "average"
+      seed:
+        description: "rng seed"
+        required: false
+        default: "0"
 
 jobs:
   eval:
@@ -30,10 +42,23 @@ jobs:
           pip install numpy osrparse
           pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Run shard
+        env:
+          MAPS: ${{ github.event.inputs.maps }}
+          CANDIDATES_B64: ${{ github.event.inputs.candidates_b64 }}
+          PROFILE: ${{ github.event.inputs.profile }}
+          SEED: ${{ github.event.inputs.seed }}
         run: |
-          python scripts/eval_maps.py --tasks "${{ github.event.inputs.tasks }}" \
-            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
-            --out "result_${{ matrix.shard }}.json"
+          if [ -n "$CANDIDATES_B64" ]; then
+            python scripts/eval_maps.py --candidates-b64 "$CANDIDATES_B64" --maps "$MAPS" \
+              --profile "$PROFILE" --seed "$SEED" \
+              --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+              --out "result_${{ matrix.shard }}.json"
+          else
+            python scripts/eval_maps.py --maps "$MAPS" \
+              --profile "$PROFILE" --seed "$SEED" \
+              --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+              --out "result_${{ matrix.shard }}.json"
+          fi
       - name: Upload result
         if: always()
         uses: actions/upload-artifact@v4

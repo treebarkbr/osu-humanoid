@@ -60,6 +60,7 @@ def eval_task(task: dict, *, ckpt: str, profile: str, seed: int, threshold: floa
                       params=from_profile(profile), threshold=threshold)
     rep = RO.judge_generated(bm, gen)
     c = rep.counts()
+    reward, max_combo = reward_from_report(rep)
     return {
         "id": task.get("id", task["map"]),
         "map": task["map"],
@@ -71,8 +72,48 @@ def eval_task(task: dict, *, ckpt: str, profile: str, seed: int, threshold: floa
         "tick_misses": rep.tick_misses,
         "tick_hits": rep.tick_hits,
         "ur": rep.unstable_rate,
+        "reward": reward,
+        "max_combo": max_combo,
         "summary": rep.summary(),
     }
+
+
+# Reward weights (user spec). Hits -> +20/+6/+2, miss -> -40, slider break ->
+# -60, tick miss -> -15, per-combo-step +0.2, new-max-combo +30, perfect hit +2.
+REWARD = {
+    "h300": 20.0, "h100": 6.0, "h50": 2.0, "miss": -40.0,
+    "drop": -60.0, "tick_miss": -15.0, "tick_hit": 0.5,
+    "combo_step": 0.2, "max_combo": 30.0, "perfect": 2.0, "perfect_ms": 8.0,
+    "spin_300": 25.0, "spin_100": 8.0, "spin_50": 3.0, "spin_miss": -40.0,
+}
+
+
+def reward_from_report(rep) -> tuple[float, int]:
+    R = 0.0
+    combo = 0
+    max_combo = 0
+    for r in rep.results:
+        if r.is_spinner:
+            R += {"300": REWARD["spin_300"], "100": REWARD["spin_100"],
+                  "50": REWARD["spin_50"]}.get(r.kind, REWARD["spin_miss"])
+            continue
+        if r.kind == "miss":
+            R += REWARD["miss"]
+            combo = 0
+        else:
+            R += REWARD[f"h{r.kind}"]
+            combo += 1
+            R += REWARD["combo_step"]
+            if combo > max_combo:
+                max_combo = combo
+                R += REWARD["max_combo"]
+            if r.kind == "300" and r.hit_error is not None and abs(r.hit_error) < REWARD["perfect_ms"]:
+                R += REWARD["perfect"]
+        if r.is_slider:
+            R += REWARD["drop"] * r.dropped
+            R += REWARD["tick_miss"] * r.tick_misses
+            R += REWARD["tick_hit"] * r.tick_hits
+    return R, max_combo
 
 
 def aggregate(rows: list[dict]) -> dict:
@@ -88,6 +129,8 @@ def aggregate(rows: list[dict]) -> dict:
         "drops": sum(r["drops"] for r in rows),
         "tick_misses": sum(r["tick_misses"] for r in rows),
         "mean_acc": float(np.mean([r["acc"] for r in rows])),
+        "reward": sum(r["reward"] for r in rows),
+        "mean_reward": float(np.mean([r["reward"] for r in rows])),
         "per_map": rows,
     }
 
@@ -97,6 +140,8 @@ def main() -> int:
     ap.add_argument("--maps", default="924759.osu", help="comma list of .osu filenames")
     ap.add_argument("--all", action="store_true", help="use every map in data/beatmaps")
     ap.add_argument("--tasks", default=None, help="path to a task JSON file")
+    ap.add_argument("--candidates-b64", default=None,
+                    help="base64 JSON list of {id, tap_patch}; crossed with --maps")
     ap.add_argument("--shard", default=None, help="i/n -> evaluate every n-th task starting at i")
     ap.add_argument("--ckpt", default="checkpoints")
     ap.add_argument("--profile", default="average")
@@ -106,7 +151,13 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="write JSON result here")
     args = ap.parse_args()
 
-    if args.tasks:
+    if args.candidates_b64:
+        import base64
+        cands = json.loads(base64.b64decode(args.candidates_b64))
+        files = [f.strip() for f in args.maps.split(",") if f.strip()]
+        tasks = [{"id": f"{c['id']}::{m}", "map": m, "tap_patch": c.get("tap_patch")}
+                 for c in cands for m in files]
+    elif args.tasks:
         cfg = json.loads(Path(args.tasks).read_text())
         profile = cfg.get("profile", args.profile)
         seed = cfg.get("seed", args.seed)
