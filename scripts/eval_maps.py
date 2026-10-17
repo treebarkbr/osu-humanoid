@@ -151,6 +151,8 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="write JSON result here")
     args = ap.parse_args()
 
+    profile, seed, threshold, ckpt = args.profile, args.seed, args.threshold, args.ckpt
+
     if args.candidates_b64:
         import base64
         cands = json.loads(base64.b64decode(args.candidates_b64))
@@ -159,25 +161,22 @@ def main() -> int:
                  for c in cands for m in files]
     elif args.tasks:
         cfg = json.loads(Path(args.tasks).read_text())
-        profile = cfg.get("profile", args.profile)
-        seed = cfg.get("seed", args.seed)
-        threshold = cfg.get("threshold", args.threshold)
-        ckpt = cfg.get("ckpt", args.ckpt)
+        profile = cfg.get("profile", profile)
+        seed = cfg.get("seed", seed)
+        threshold = cfg.get("threshold", threshold)
+        ckpt = cfg.get("ckpt", ckpt)
         tasks = cfg["tasks"]
-        if args.shard:
-            i, n = (int(x) for x in args.shard.split("/"))
-            tasks = tasks[i::n]
     else:
-        profile, seed, threshold, ckpt = args.profile, args.seed, args.threshold, args.ckpt
         if args.all:
             files = sorted(p.name for p in BM_DIR.glob("*.osu"))
         else:
             files = [f.strip() for f in args.maps.split(",") if f.strip()]
         patch = json.loads(Path(args.tap_patch).read_text()) if args.tap_patch else None
         tasks = [{"id": f, "map": f, "tap_patch": patch} for f in files]
-        if args.shard:
-            i, n = (int(x) for x in args.shard.split("/"))
-            tasks = tasks[i::n]
+
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        tasks = tasks[i::n]
 
     rows = []
     for t in tasks:
