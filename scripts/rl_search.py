@@ -162,6 +162,7 @@ def main() -> int:
         by_cand = dispatch_and_collect(cands, maps, args.shards)
 
         fits = []
+        rewards = []
         for i, x in enumerate(X):
             cid = f"g{gen}c{i}"
             rows = by_cand.get(cid, [])
@@ -170,19 +171,20 @@ def main() -> int:
             pen = args.lam * float(np.sum((np.array(x) - x0) ** 2))
             fit = R - pen
             fits.append(fit)
+            rewards.append(R)
             na = float(np.mean(accs)) if accs else 0.0
             log(f"gen {gen} c{i}: R={R:9.0f} acc={na*100:5.1f}% pen={pen:8.0f} fit={fit:9.0f}")
 
+        best_i = int(np.argmax(fits))
+        if rewards[best_i] > best_seen:
+            best_seen = rewards[best_i]
+            write_rl_checkpoint(np.array(X[best_i]))
+            log(f"  >> new best R={rewards[best_i]:.0f} saved checkpoints_rl/tap.pt")
+
         es.tell(X, fits)
         gen += 1
-        bx = np.array(es.result.xbest)
-        bR = sum(r.get("reward", 0.0) for r in by_cand.get(f"g{gen-1}c{int(es.result.ibest)}", []))
-        if bR > best_seen:
-            best_seen = bR
-            write_rl_checkpoint(bx)
-            log(f"  >> new best R={bR:.0f} saved checkpoints_rl/tap.pt")
 
-    log(f"done. best fitness {es.result.fbest:.0f} reward {best_seen:.0f}")
+    log(f"done. best reward {best_seen:.0f}")
     return 0
 
 

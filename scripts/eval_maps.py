@@ -36,14 +36,18 @@ from pipeline.humanize import from_profile  # noqa: E402
 BM_DIR = _ROOT / "data" / "beatmaps"
 
 
-def apply_tap_patch(tap, patch: dict | None) -> None:
+def apply_patch(net, patch: dict | None) -> None:
     if not patch:
         return
-    sd = tap.state_dict()
+    sd = net.state_dict()
     for k, v in patch.items():
         ref = sd[k]
         sd[k] = torch.tensor(v, dtype=ref.dtype).reshape(ref.shape)
-    tap.load_state_dict(sd)
+    net.load_state_dict(sd)
+
+
+def apply_tap_patch(tap, patch: dict | None) -> None:
+    apply_patch(tap, patch)
 
 
 def _fresh_nets(ckpt: str):
@@ -54,10 +58,17 @@ def eval_task(task: dict, *, ckpt: str, profile: str, seed: int, threshold: floa
     bm_path = BM_DIR / task["map"]
     bm = parse_beatmap(bm_path)
     aim, tap = _fresh_nets(ckpt)
-    apply_tap_patch(tap, task.get("tap_patch"))
+    apply_patch(tap, task.get("tap_patch"))
+    apply_patch(aim, task.get("aim_patch"))
+    ro = task.get("rollout") or {}
+    kw = {"threshold": ro.get("threshold", threshold)}
+    if "clip" in ro:
+        kw["clip"] = ro["clip"]
+    if "momentum" in ro:
+        kw["momentum"] = ro["momentum"]
     rng = np.random.default_rng(seed)
     gen = RO.generate(bm, aim, tap, od=bm.od, ar=bm.ar, rng=rng,
-                      params=from_profile(profile), threshold=threshold)
+                      params=from_profile(profile), **kw)
     rep = RO.judge_generated(bm, gen)
     c = rep.counts()
     reward, max_combo = reward_from_report(rep)
