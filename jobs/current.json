@@ -1,0 +1,47 @@
+{
+  "profile": "average",
+  "seed": 0,
+  "threshold": 0.5,
+  "tasks": [
+    {
+      "id": "base_924759.osu",
+      "map": "924759.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1021349.osu",
+      "map": "1021349.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1092090.osu",
+      "map": "1092090.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1093245.osu",
+      "map": "1093245.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1093507.osu",
+      "map": "1093507.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_110175.osu",
+      "map": "110175.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1104798.osu",
+      "map": "1104798.osu",
+      "tap_patch": null
+    },
+    {
+      "id": "base_1119026.osu",
+      "map": "1119026.osu",
+      "tap_patch": null
+    }
+  ]
+}

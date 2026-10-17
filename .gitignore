@@ -1,0 +1,28 @@
+# secrets
+.env
+.env.*
+.osu_token.json
+
+# large data / not needed for CI eval
+data/datasets/
+data/datasets_broken/
+data/dagger/
+data/replays/
+data/osu/
+data/ocl/
+*.mp4
+*.osr
+__pycache__/
+*.pyc
+.venv/
+
+# extra local runs / checkpoints we don't need in CI
+checkpoints_*/
+ck_*/
+*.log
+
+# loose model files at repo root (keep checkpoints/)
+/aim.pt
+/aim_act5.pt
+/read_act5.pt
+/tap_act5.pt
