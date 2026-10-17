@@ -121,7 +121,8 @@ def main() -> int:
     ap.add_argument("--pop", type=int, default=8)
     ap.add_argument("--maps", type=int, default=8)
     ap.add_argument("--shards", type=int, default=16)
-    ap.add_argument("--lam", type=float, default=150.0, help="trust-region weight (human anchor)")
+    ap.add_argument("--lam", type=float, default=0.005,
+                    help="trust-region weight in accuracy units (human anchor)")
     ap.add_argument("--log", default="/tmp/opencode/rl_search.log")
     args = ap.parse_args()
 
@@ -149,27 +150,28 @@ def main() -> int:
             cands.append({"id": f"g{gen}c{i}", "params": [float(v) for v in x]})
         by_cand = dispatch_and_collect(cands, maps, args.shards)
 
-        fits, rewards = [], []
+        fits, rewards, accs_all = [], [], []
         for i, x in enumerate(X):
             rows = by_cand.get(f"g{gen}c{i}", [])
             R = sum(r.get("reward", 0.0) for r in rows if "error" not in r)
             accs = [r["acc"] for r in rows if "error" not in r]
-            pen = args.lam * float(np.sum(((np.array(x) - X0) / STDS) ** 2))
-            fits.append(R - pen)
-            rewards.append(R)
             na = float(np.mean(accs)) if accs else 0.0
-            log(f"gen {gen} c{i}: x={np.round(x,3).tolist()} R={R:9.0f} "
-                f"acc={na*100:5.1f}% pen={pen:7.0f} fit={R-pen:9.0f}")
+            pen = args.lam * float(np.sum(((np.array(x) - X0) / STDS) ** 2))
+            fits.append(na - pen)
+            rewards.append(R)
+            accs_all.append(na)
+            log(f"gen {gen} c{i}: x={np.round(x,3).tolist()} "
+                f"acc={na*100:5.1f}% R={R:9.0f} pen={pen:6.4f} fit={na-pen:.4f}")
 
         bi = int(np.argmax(fits))
-        if rewards[bi] > best_seen:
-            best_seen = rewards[bi]
+        if accs_all[bi] > best_seen:
+            best_seen = accs_all[bi]
             write_rl_checkpoint(np.array(X[bi]))
-            log(f"  >> new best R={rewards[bi]:.0f} x={np.round(X[bi],3).tolist()} "
-                f"saved checkpoints_rl/")
+            log(f"  >> new best acc={accs_all[bi]*100:.2f}% R={rewards[bi]:.0f} "
+                f"x={np.round(X[bi],3).tolist()} saved checkpoints_rl/")
         es.tell(X, fits)
 
-    log(f"done. best reward {best_seen:.0f}")
+    log(f"done. best mean acc {best_seen*100:.2f}%")
     return 0
 
 
