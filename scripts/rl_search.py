@@ -7,9 +7,10 @@ nets, so the result stays close to the human policy (BC anchor = trust region):
     tap:  logit' = s * logit + t
 
 Parameter vector x = [gx, gy, ox, oy, s, t], initialised at the identity
-[1, 1, 0, 0, 1, 0]. CMA-ES drives it; the fitness is
+[1, 1, 0, 0, 1, 0]. A robust compass + random search (one dispatch per
+generation, only moves on improvement) maximises
 
-    fit = mean_map(reward) - lam * ||x - x0||^2
+    fit = mean_map(reward)
 
 where `reward` is the composite judge reward (pipeline/reward.py).
 
@@ -123,19 +124,11 @@ def main() -> int:
     ap.add_argument("--pop", type=int, default=8)
     ap.add_argument("--maps", type=int, default=8)
     ap.add_argument("--shards", type=int, default=16)
-    ap.add_argument("--lam", type=float, default=0.005,
-                    help="trust-region weight in accuracy units (human anchor)")
     ap.add_argument("--log", default="/tmp/opencode/rl_search.log")
     args = ap.parse_args()
 
     maps = SUITE[: args.maps]
-    import cma
-
-    print(f"params dim {NUM_PARAMS}  maps {len(maps)}  pop {args.pop}", flush=True)
-    es = cma.CMAEvolutionStrategy(X0.tolist(), 1.0,
-                                  {"popsize": args.pop, "seed": 1, "verbose": -9,
-                                   "maxiter": args.gens, "CMA_stds": STDS.tolist(),
-                                   "bounds": [-30, 30]})
+    dim = NUM_PARAMS
 
     logf = open(args.log, "a")
 
@@ -144,46 +137,66 @@ def main() -> int:
         logf.write(msg + "\n")
         logf.flush()
 
-    # Seed baseline (identity == the human-trained nets). We start `best_seen`
-    # here and write the seed into checkpoints_rl so the search never saves a
-    # candidate that is worse than the human policy.
-    by_seed = dispatch_and_collect([{"id": "seed", "params": X0.tolist()}], maps, args.shards)
-    seed_rows = [r for r in by_seed.get("seed", []) if "error" not in r]
-    best_seen = float(np.mean([r["reward"] for r in seed_rows])) if seed_rows else -1e18
-    seed_acc = float(np.mean([r["acc"] for r in seed_rows])) if seed_rows else 0.0
-    write_rl_checkpoint(X0)
-    log(f"seed x0: R={best_seen:.4f} acc={seed_acc*100:.2f}%  ({len(seed_rows)} maps)")
+    # Parameter box: keeps the search physically sane (gains ~1, offsets
+    # px/frame, tap bias in logits). CMA-ES drifted off this manifold, so we
+    # use a robust compass + random search that can only move on improvement.
+    lo = np.array([0.6, 0.6, -0.3, -0.3, 0.5, -3.0])
+    hi = np.array([1.4, 1.4, 0.3, 0.3, 1.5, 3.0])
 
+    def clamp(v):
+        return np.clip(v, lo, hi)
+
+    def evaluate(param_list):
+        cands = [{"id": cid, "params": [float(v) for v in vv]} for cid, vv in param_list]
+        by = dispatch_and_collect(cands, maps, args.shards)
+        out = {}
+        for cid, _ in param_list:
+            rows = [r for r in by.get(cid, []) if "error" not in r]
+            R = float(np.mean([r["reward"] for r in rows])) if rows else -1e18
+            acc = float(np.mean([r["acc"] for r in rows])) if rows else 0.0
+            out[cid] = (R, acc)
+        return out
+
+    # Seed baseline (identity == human nets): start the incumbent here and
+    # write it into checkpoints_rl so we can never save worse-than-human.
+    x = X0.copy()
+    R_cur, acc_cur = evaluate([("seed", x)])["seed"]
+    write_rl_checkpoint(x)
+    log(f"seed x0: R={R_cur:.4f} acc={acc_cur*100:.2f}%")
+    best_R, best_x, best_acc = R_cur, x.copy(), acc_cur
+
+    step = STDS.copy()
+    rng = np.random.default_rng(1)
     for gen in range(args.gens):
-        X = es.ask()
-        cands = []
-        for i, x in enumerate(X):
-            cands.append({"id": f"g{gen}c{i}", "params": [float(v) for v in x]})
-        by_cand = dispatch_and_collect(cands, maps, args.shards)
+        probes = []
+        for i in range(dim):
+            for sgn in (1.0, -1.0):
+                y = x.copy()
+                y[i] += sgn * step[i]
+                probes.append((f"g{gen}_a{i}{'p' if sgn > 0 else 'n'}", clamp(y)))
+        for i in range(args.pop):
+            probes.append((f"g{gen}_r{i}", clamp(x + rng.standard_normal(dim) * step)))
 
-        fits, rewards, accs_all = [], [], []
-        for i, x in enumerate(X):
-            rows = by_cand.get(f"g{gen}c{i}", [])
-            ok = [r for r in rows if "error" not in r]
-            R = float(np.mean([r["reward"] for r in ok])) if ok else 0.0
-            accs = [r["acc"] for r in ok]
-            na = float(np.mean(accs)) if accs else 0.0
-            pen = args.lam * float(np.sum(((np.array(x) - X0) / STDS) ** 2))
-            fits.append(R - pen)
-            rewards.append(R)
-            accs_all.append(na)
-            log(f"gen {gen} c{i}: x={np.round(x,3).tolist()} "
-                f"R={R:.4f} acc={na*100:5.1f}% pen={pen:6.4f} fit={R-pen:.4f}")
+        res = evaluate(probes)
+        bx, bR, bA = None, -1e18, 0.0
+        for cid, y in probes:
+            R, acc = res[cid]
+            log(f"gen {gen} {cid}: R={R:.4f} acc={acc*100:5.1f}%")
+            if R > bR:
+                bx, bR, bA = y, R, acc
+        if bx is not None and bR > R_cur + 1e-4:
+            x, R_cur, acc_cur = bx.copy(), bR, bA
+            if R_cur > best_R:
+                best_R, best_x, best_acc = R_cur, x.copy(), acc_cur
+                write_rl_checkpoint(x)
+                log(f"  >> new best R={best_R:.4f} acc={best_acc*100:.2f}% "
+                    f"x={np.round(x,3).tolist()}")
+        else:
+            step = step * 0.5
+            log(f"  stall -> step*0.5 {np.round(step,4).tolist()}")
 
-        bi = int(np.argmax(fits))
-        if rewards[bi] > best_seen:
-            best_seen = rewards[bi]
-            write_rl_checkpoint(np.array(X[bi]))
-            log(f"  >> new best R={rewards[bi]:.4f} acc={accs_all[bi]*100:.2f}% "
-                f"x={np.round(X[bi],3).tolist()} saved checkpoints_rl/")
-        es.tell(X, fits)
-
-    log(f"done. best mean reward {best_seen:.4f}")
+    log(f"done. best mean reward {best_R:.4f} acc={best_acc*100:.2f}% "
+        f"x={np.round(best_x,3).tolist()}")
     return 0
 
 
