@@ -168,7 +168,8 @@ def main() -> int:
         import base64
         cands = json.loads(base64.b64decode(args.candidates_b64))
         files = [f.strip() for f in args.maps.split(",") if f.strip()]
-        tasks = [{"id": f"{c['id']}::{m}", "map": m, "tap_patch": c.get("tap_patch")}
+        tasks = [{"id": f"{c['id']}::{m}", "map": m,
+                  **{k: v for k, v in c.items() if k != "id"}}
                  for c in cands for m in files]
     elif args.tasks:
         cfg = json.loads(Path(args.tasks).read_text())
