@@ -50,6 +50,8 @@ class JudgementResult:
     tick_hits: int = 0
     tick_total: int = 0
     tick_misses: int = 0
+    spin_count: int = 0
+    spin_req: int = 0
 
 
 @dataclass
@@ -228,7 +230,19 @@ def _is_legacy_version(frames: ReplayFrames) -> bool:
 
 def judge_replay(bm: Beatmap, frames: ReplayFrames, mods=(),
                  *, replay_map_time: bool | None = None) -> JudgeReport:
-    """Judge a replay.
+    """Judge a replay with the danser stable ruleset.
+
+    Thin delegator to :func:`pipeline.danser_judge.judge_danser` (imported
+    lazily to avoid a circular import).  Kept as the public entry point so all
+    downstream consumers (eval_maps, watch, live_sim) work unchanged.
+    """
+    from .danser_judge import judge_danser
+    return judge_danser(bm, frames, mods, replay_map_time=replay_map_time)
+
+
+def _judge_replay_lazer(bm: Beatmap, frames: ReplayFrames, mods=(),
+                 *, replay_map_time: bool | None = None) -> JudgeReport:
+    """Old lazer-modelled judge (retained for reference/comparison).
 
     ``replay_map_time`` selects the replay timestamp base. Stable replays store
     the cursor/key stream in *beatmap* time (unaffected by DT/HT), whereas the

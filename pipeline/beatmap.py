@@ -86,6 +86,7 @@ class Beatmap:
     hp: float = 5.0
     slider_multiplier: float = 1.4
     slider_tick_rate: float = 1.0
+    stack_leniency: float = 0.7
     hit_objects: list[HitObject] = field(default_factory=list)
     timing_points: list[TimingPoint] = field(default_factory=list)
 
@@ -150,6 +151,10 @@ def parse_beatmap(path: str | Path) -> Beatmap:
             difficulty[key] = value
 
     bm.mode = int(general.get("Mode", "0"))
+    try:
+        bm.stack_leniency = float(general.get("StackLeniency", "0.7"))
+    except (TypeError, ValueError):
+        bm.stack_leniency = 0.7
     bm.version = metadata.get("Version", "")
     bm.artist = metadata.get("Artist", "")
     bm.title = metadata.get("Title", "")

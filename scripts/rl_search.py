@@ -9,7 +9,9 @@ nets, so the result stays close to the human policy (BC anchor = trust region):
 Parameter vector x = [gx, gy, ox, oy, s, t], initialised at the identity
 [1, 1, 0, 0, 1, 0]. CMA-ES drives it; the fitness is
 
-    fit = sum_reward(maps) - lam * ||x - x0||^2
+    fit = mean_map(reward) - lam * ||x - x0||^2
+
+where `reward` is the composite judge reward (pipeline/reward.py).
 
 The best candidate is written to checkpoints_rl/{aim.pt,tap.pt} so the viewer's
 RL button shows the trained result.
@@ -153,25 +155,26 @@ def main() -> int:
         fits, rewards, accs_all = [], [], []
         for i, x in enumerate(X):
             rows = by_cand.get(f"g{gen}c{i}", [])
-            R = sum(r.get("reward", 0.0) for r in rows if "error" not in r)
-            accs = [r["acc"] for r in rows if "error" not in r]
+            ok = [r for r in rows if "error" not in r]
+            R = float(np.mean([r["reward"] for r in ok])) if ok else 0.0
+            accs = [r["acc"] for r in ok]
             na = float(np.mean(accs)) if accs else 0.0
             pen = args.lam * float(np.sum(((np.array(x) - X0) / STDS) ** 2))
-            fits.append(na - pen)
+            fits.append(R - pen)
             rewards.append(R)
             accs_all.append(na)
             log(f"gen {gen} c{i}: x={np.round(x,3).tolist()} "
-                f"acc={na*100:5.1f}% R={R:9.0f} pen={pen:6.4f} fit={na-pen:.4f}")
+                f"R={R:.4f} acc={na*100:5.1f}% pen={pen:6.4f} fit={R-pen:.4f}")
 
         bi = int(np.argmax(fits))
-        if accs_all[bi] > best_seen:
-            best_seen = accs_all[bi]
+        if rewards[bi] > best_seen:
+            best_seen = rewards[bi]
             write_rl_checkpoint(np.array(X[bi]))
-            log(f"  >> new best acc={accs_all[bi]*100:.2f}% R={rewards[bi]:.0f} "
+            log(f"  >> new best R={rewards[bi]:.4f} acc={accs_all[bi]*100:.2f}% "
                 f"x={np.round(X[bi],3).tolist()} saved checkpoints_rl/")
         es.tell(X, fits)
 
-    log(f"done. best mean acc {best_seen*100:.2f}%")
+    log(f"done. best mean reward {best_seen:.4f}")
     return 0
 
 
