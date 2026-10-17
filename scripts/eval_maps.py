@@ -58,8 +58,14 @@ def eval_task(task: dict, *, ckpt: str, profile: str, seed: int, threshold: floa
     bm_path = BM_DIR / task["map"]
     bm = parse_beatmap(bm_path)
     aim, tap = _fresh_nets(ckpt)
-    apply_patch(tap, task.get("tap_patch"))
-    apply_patch(aim, task.get("aim_patch"))
+    if task.get("params") is not None:
+        from pipeline.rl_params import x_to_patch
+        p = x_to_patch(task["params"], aim, tap)
+        apply_patch(aim, p["aim_patch"])
+        apply_patch(tap, p["tap_patch"])
+    else:
+        apply_patch(tap, task.get("tap_patch"))
+        apply_patch(aim, task.get("aim_patch"))
     ro = task.get("rollout") or {}
     kw = {"threshold": ro.get("threshold", threshold)}
     if "clip" in ro:

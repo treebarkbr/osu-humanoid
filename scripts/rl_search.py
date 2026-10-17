@@ -34,6 +34,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 import scripts.rollout as RO  # noqa: E402
+from pipeline.rl_params import NUM_PARAMS, STDS, X0, x_to_patch  # noqa: E402
 
 CKPT_SEED = _ROOT / "checkpoints"
 CKPT_RL = _ROOT / "checkpoints_rl"
@@ -43,38 +44,15 @@ WORKFLOW = "eval.yml"
 SUITE = ["924759.osu", "1021349.osu", "1092090.osu", "1093245.osu",
          "1093507.osu", "110175.osu", "1104798.osu", "1119026.osu"]
 
-NUM_PARAMS = 6
-X0 = np.array([1.0, 1.0, 0.0, 0.0, 1.0, 0.0])
-STDS = np.array([0.06, 0.06, 2.0, 2.0, 0.06, 0.4])
-
 
 def _seed_nets():
     return RO._load(CKPT_SEED)
 
 
-def x_to_candidate(x: np.ndarray) -> dict:
-    gx, gy, ox, oy, s, t = [float(v) for v in x]
-    aim, tap = _seed_nets()
-    aw = aim.net[4].weight.detach()          # (2, 256)
-    ab = aim.net[4].bias.detach()            # (2,)
-    tw = tap.net[4].weight.detach()          # (1, 96)
-    tb = tap.net[4].bias.detach()            # (1,)
-    aim_w = aw.clone()
-    aim_b = ab.clone()
-    aim_w[0] = gx * aw[0]
-    aim_w[1] = gy * aw[1]
-    aim_b[0] = gx * ab[0] + ox
-    aim_b[1] = gy * ab[1] + oy
-    return {
-        "aim_patch": {"net.4.weight": aim_w.tolist(), "net.4.bias": aim_b.tolist()},
-        "tap_patch": {"net.4.weight": (s * tw).tolist(), "net.4.bias": (s * tb + t).tolist()},
-    }
-
-
 def write_rl_checkpoint(x: np.ndarray) -> None:
     CKPT_RL.mkdir(exist_ok=True)
-    cand = x_to_candidate(x)
     aim, tap = _seed_nets()
+    cand = x_to_patch(x, aim, tap)
     for net, key, fname in ((aim, "aim_patch", "aim.pt"), (tap, "tap_patch", "tap.pt")):
         sd = net.state_dict()
         for k, v in cand[key].items():
@@ -168,9 +146,7 @@ def main() -> int:
         X = es.ask()
         cands = []
         for i, x in enumerate(X):
-            c = x_to_candidate(np.array(x))
-            c["id"] = f"g{gen}c{i}"
-            cands.append(c)
+            cands.append({"id": f"g{gen}c{i}", "params": [float(v) for v in x]})
         by_cand = dispatch_and_collect(cands, maps, args.shards)
 
         fits, rewards = [], []
