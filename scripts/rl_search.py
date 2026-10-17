@@ -144,7 +144,16 @@ def main() -> int:
         logf.write(msg + "\n")
         logf.flush()
 
-    best_seen = -1e18
+    # Seed baseline (identity == the human-trained nets). We start `best_seen`
+    # here and write the seed into checkpoints_rl so the search never saves a
+    # candidate that is worse than the human policy.
+    by_seed = dispatch_and_collect([{"id": "seed", "params": X0.tolist()}], maps, args.shards)
+    seed_rows = [r for r in by_seed.get("seed", []) if "error" not in r]
+    best_seen = float(np.mean([r["reward"] for r in seed_rows])) if seed_rows else -1e18
+    seed_acc = float(np.mean([r["acc"] for r in seed_rows])) if seed_rows else 0.0
+    write_rl_checkpoint(X0)
+    log(f"seed x0: R={best_seen:.4f} acc={seed_acc*100:.2f}%  ({len(seed_rows)} maps)")
+
     for gen in range(args.gens):
         X = es.ask()
         cands = []
